@@ -2,7 +2,7 @@ import bpy
 from bpy.types import Panel, UIList
 
 from . import ADDON_REPO_URL, bl_info
-from .operators import check_backend
+from .operators import check_backend, get_efmi_compatibility_note
 
 
 class CSBE_UL_PropList(UIList):
@@ -58,6 +58,16 @@ class VIEW3D_PT_CSBEExport(Panel):
         else:
             status_row.alert = True
             status_row.label(text=status_msg, icon="ERROR")
+
+        if settings.backend == "EFMI" and ok:
+            cfg = getattr(context.scene, "efmi_tools_settings", None)
+            level, note = get_efmi_compatibility_note(cfg)
+            note_row = col.row()
+            if level == "ERROR":
+                note_row.alert = True
+                note_row.label(text=note, icon="ERROR")
+            else:
+                note_row.label(text=note, icon="INFO")
 
         layout.separator(factor=0.5)
 
@@ -151,6 +161,7 @@ class VIEW3D_PT_CSBEExport(Panel):
 
         col.separator()
         col.prop(settings, "restore_after_export")
+        col.prop(settings, "verbose_logging")
 
         # Naming convention hint — backend-aware
         hint = box.box().column(align=True)
@@ -205,6 +216,7 @@ class VIEW3D_PT_CSBEExport(Panel):
             col.label(text=f"{bl_info.get('name', 'CSBE')} v{version}")
             col.label(text="Created by Kazeyako")
             col.label(text="Uses EFMI-Tools as the EFMI export backend")
+            col.label(text="Keep base and variant exports on the same EFMI version")
 
             row = col.row(align=True)
             row.operator("csbe.open_repo", text="Open GitHub", icon="URL")

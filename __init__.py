@@ -13,7 +13,7 @@ buffers with a shape-identifying suffix.
 bl_info = {
     "name": "CSBE - Component Shape Bulk Exporter",
     "author": "Kazeyako",
-    "version": (1, 3, 0),
+    "version": (1, 3, 1),
     "blender": (5, 1, 0),
     "location": "View3D > Sidebar > CSBE",
     "description": (

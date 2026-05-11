@@ -124,6 +124,15 @@ class CSBESettings(PropertyGroup):
         default=True,
     )
 
+    verbose_logging: BoolProperty(
+        name="Verbose Console Logging",
+        description=(
+            "Print detailed per-object driver and temporary-copy diagnostics "
+            "to the Blender system console"
+        ),
+        default=False,
+    )
+
     show_about: BoolProperty(
         name="Show Credits and Update",
         description="Show addon credits, repository link, and update controls",

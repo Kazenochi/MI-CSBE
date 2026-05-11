@@ -36,6 +36,7 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+import json
 from pathlib import Path
 
 import bpy
@@ -129,7 +130,79 @@ def check_backend(backend: str) -> tuple[bool, str]:
     if cfg is None:
         return False, f"Scene settings for {backend} not found (addon may need reload)"
 
+    if backend == "EFMI":
+        version = getattr(cfg, "efmi_tools_version", "")
+        if version:
+            return True, f"loaded (EFMI-Tools v{version})"
+
     return True, "loaded"
+
+
+def _version_tuple(raw) -> tuple[int, ...]:
+    """Return a comparable numeric version tuple from Blender-style strings."""
+    if raw is None:
+        return ()
+    if isinstance(raw, (tuple, list)):
+        return tuple(int(v) for v in raw if isinstance(v, int))
+    return tuple(int(part) for part in re.findall(r"\d+", str(raw)))
+
+
+def _read_metadata_format_version(tool_cfg) -> int | None:
+    """Read EFMI Metadata.json format_version from the configured import folder."""
+    raw_folder = (
+        getattr(tool_cfg, "object_source_folder", "")
+        or getattr(tool_cfg, "mod_folder", "")
+        or getattr(tool_cfg, "raw_import_folder", "")
+    )
+    if not raw_folder:
+        return None
+    metadata_path = Path(bpy.path.abspath(raw_folder)) / "Metadata.json"
+    if not metadata_path.exists():
+        return None
+    try:
+        with open(metadata_path, "r", encoding="utf-8") as handle:
+            metadata = json.load(handle)
+        version = metadata.get("format_version")
+        return int(version) if version is not None else None
+    except Exception:
+        return None
+
+
+def get_efmi_compatibility_note(tool_cfg) -> tuple[str, str]:
+    """Return (level, note) for EFMI version/metadata compatibility."""
+    version = getattr(tool_cfg, "efmi_tools_version", "") if tool_cfg else ""
+    version_tuple = _version_tuple(version)
+    metadata_version = _read_metadata_format_version(tool_cfg) if tool_cfg else None
+
+    if version_tuple >= (0, 4, 3):
+        if metadata_version is None or metadata_version < 3:
+            return (
+                "ERROR",
+                "EFMI 0.4.3+ needs Metadata.json format v3+. "
+                "Re-extract/re-import with this EFMI version.",
+            )
+        return (
+            "INFO",
+            f"EFMI v{version}; Metadata format v{metadata_version}. "
+            "Use this same EFMI version for base and variant exports.",
+        )
+
+    if version:
+        return (
+            "INFO",
+            f"EFMI v{version}. Use the same EFMI version for base and variant exports.",
+        )
+    return (
+        "INFO",
+        "Use the same EFMI version for base and variant exports.",
+    )
+
+
+def _csbe_log(context: Context, message: str, verbose: bool = False) -> None:
+    """Print default or verbose diagnostics according to the scene setting."""
+    settings = getattr(context.scene, "csbe", None)
+    if not verbose or (settings is not None and settings.verbose_logging):
+        print(message)
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +395,7 @@ def _find_efmi_object_merger_module():
     return _find_module("blender_export.object_merger", "ObjectMerger")
 
 
-def _shape_key_driver_values(obj, frame: float) -> dict[str, float]:
+def _shape_key_driver_values(obj, frame: float, log=None) -> dict[str, float]:
     """Resolve source shape-key value drivers without relying on temp objects."""
     shape_keys = getattr(obj.data, "shape_keys", None)
     anim_data = getattr(shape_keys, "animation_data", None)
@@ -372,10 +445,12 @@ def _shape_key_driver_values(obj, frame: float) -> dict[str, float]:
                         else:
                             value = target.id.path_resolve(target.data_path)
                     except Exception as exc:
-                        print(
-                            f"CSBE driver: failed to resolve {target.id.name}."
-                            f"{target.data_path}: {exc}"
-                        )
+                        if log:
+                            log(
+                                f"CSBE driver: failed to resolve {target.id.name}."
+                                f"{target.data_path}: {exc}",
+                                True,
+                            )
             else:
                 try:
                     value = fcurve.evaluate(frame)
@@ -390,17 +465,21 @@ def _shape_key_driver_values(obj, frame: float) -> dict[str, float]:
             try:
                 values[key_name] = float(fcurve.evaluate(frame))
             except Exception:
-                print(
-                    f"CSBE driver: failed to evaluate {obj.name} shape key "
-                    f"{key_name}: {exc}"
-                )
+                if log:
+                    log(
+                        f"CSBE driver: failed to evaluate {obj.name} shape key "
+                        f"{key_name}: {exc}",
+                        True,
+                    )
 
     return values
 
 
-def _freeze_shape_key_drivers_on_copy(source_obj, copied_obj, frame: float) -> None:
+def _freeze_shape_key_drivers_on_copy(
+    source_obj, copied_obj, frame: float, log=None
+) -> None:
     """Copy current source driver results into the temp object's key values."""
-    driven_values = _shape_key_driver_values(source_obj, frame)
+    driven_values = _shape_key_driver_values(source_obj, frame, log)
     shape_keys = getattr(copied_obj.data, "shape_keys", None)
     if shape_keys is None:
         return
@@ -415,8 +494,8 @@ def _freeze_shape_key_drivers_on_copy(source_obj, copied_obj, frame: float) -> N
     if shape_keys.animation_data:
         shape_keys.animation_data_clear()
 
-    if active:
-        print(f"CSBE frozen shape keys: {source_obj.name}: " + ", ".join(active))
+    if active and log:
+        log(f"CSBE frozen shape keys: {source_obj.name}: " + ", ".join(active), True)
 
 
 def _make_efmi_evaluated_copy_object(context: Context, original_copy_object):
@@ -435,20 +514,25 @@ def _make_efmi_evaluated_copy_object(context: Context, original_copy_object):
             return original_copy_object(copy_context, obj, name=name, collection=collection)
 
         context.view_layer.update()
+        log = lambda message, verbose=False: _csbe_log(context, message, verbose)
         new_obj = obj.copy()
         new_obj.data = obj.data.copy()
         new_obj.data.name = f"{obj.data.name}_CSBE_Copy"
         new_obj.animation_data_clear()
-        _freeze_shape_key_drivers_on_copy(obj, new_obj, context.scene.frame_current)
+        _freeze_shape_key_drivers_on_copy(
+            obj, new_obj, context.scene.frame_current, log
+        )
         if name:
             new_obj.name = name
         if collection:
             collection.objects.link(new_obj)
         new_obj.select_set(False)
 
-        print(
+        _csbe_log(
+            context,
             f"CSBE evaluated copy: {obj.name} -> {new_obj.name} "
-            f"({len(new_obj.data.vertices)} vertices)"
+            f"({len(new_obj.data.vertices)} vertices)",
+            True,
         )
         return new_obj
 
@@ -561,6 +645,11 @@ def _efmi_export_one(context: Context, tool_cfg, output_dir: Path,
     if merger_mod is None:
         raise RuntimeError("EFMI object_merger module not found in session.")
 
+    level, note = get_efmi_compatibility_note(tool_cfg)
+    _csbe_log(context, f"CSBE EFMI compatibility: {note}")
+    if level == "ERROR":
+        raise RuntimeError(note)
+
     original_copy_object = merger_mod.copy_object
     merger_mod.copy_object = _make_efmi_evaluated_copy_object(
         context, original_copy_object
@@ -666,6 +755,9 @@ def _xxmi_export_one(context: Context, operator: Operator,
 
 def _dbg_face_shapekeys(context, col, tag: str) -> None:
     """Print shape key .value (RNA, driver-evaluated) for Component 2 objects."""
+    settings = getattr(context.scene, "csbe", None)
+    if settings is None or not settings.verbose_logging:
+        return
     if col is None:
         return
     import re as _re
@@ -856,6 +948,7 @@ class CSBE_OT_ExportBatch(Operator):
                 for value in raw_values:
                     log_label = f"{prop_name}={value}"
                     try:
+                        print(f"CSBE: exporting {log_label} -> {label}")
                         # Set property, then trigger TWO evaluation passes:
                         # 1. frame_set  — re-runs the dependency graph for the
                         #    current frame so keyframed drivers see the new value.

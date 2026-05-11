@@ -14,12 +14,17 @@ The intended workflow is:
 
 This addon is currently tested only with the EFMI-Tools export backend. The UI still contains backend plumbing for other pipelines, but non-EFMI exports should be considered experimental until tested.
 
+The addon is intended to stay consistent within one EFMI-Tools version cycle. Export the base buffers and all CSBE variant buffers with the same EFMI-Tools version. If EFMI changes its extracted metadata format or exporter internals, re-extract/re-import the model sources with that EFMI version before exporting variants.
+
+CSBE performs a small EFMI compatibility check before export. For EFMI-Tools 0.4.3 and newer, it checks that the configured `Metadata.json` uses format version 3 or newer and stops early with a clear message if the sources are outdated.
+
 ## Requirements
 
 - Blender 5.1.x
 - EFMI-Tools installed and enabled
 - A scene configured for EFMI-Tools export
 - A control object, usually an Empty, with numeric custom properties driving shape keys
+- Matching EFMI source data for the EFMI version used for export
 
 Recommended EFMI-Tools settings used during testing:
 
@@ -39,12 +44,15 @@ After enabling the addon, open the 3D View sidebar and use the `CSBE` tab.
 ## Basic Use
 
 1. Configure EFMI-Tools as usual and verify a normal base export works.
-2. In CSBE, select the control object.
-3. Press the scan button to load numeric custom properties.
-4. For each property, set the values to export, for example `0, 1`.
-5. Optionally set a shorter output name and component list, for example `2` or `0, 3, 8, 9`.
-6. Choose an output directory or let CSBE use the EFMI output path.
-7. Run `Export VB0 Batch`.
+2. Confirm the CSBE pipeline status reports the expected EFMI version.
+3. In CSBE, select the control object.
+4. Press the scan button to load numeric custom properties.
+5. For each property, set the values to export, for example `0, 1`.
+6. Optionally set a shorter output name and component list, for example `2` or `0, 3, 8, 9`.
+7. Choose an output directory or let CSBE use the EFMI output path.
+8. Run `Export VB0 Batch`.
+
+By default, CSBE logs only the current export pass and written files. Enable `Verbose Console Logging` if you need the older per-object driver and temporary-copy diagnostics.
 
 Output names follow this pattern:
 
