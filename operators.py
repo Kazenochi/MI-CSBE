@@ -810,8 +810,13 @@ class CSBE_OT_ScanProperties(Operator):
             return {"CANCELLED"}
 
         # Preserve user edits for properties that are already in the list.
-        existing: dict[str, tuple[bool, str]] = {
-            item.prop_name: (item.enabled, item.values)
+        existing: dict[str, dict] = {
+            item.prop_name: {
+                "enabled":     item.enabled,
+                "values":      item.values,
+                "output_name": item.output_name,
+                "components":  item.components,
+            }
             for item in settings.prop_list
         }
 
@@ -820,7 +825,11 @@ class CSBE_OT_ScanProperties(Operator):
             item = settings.prop_list.add()
             item.prop_name = name
             if name in existing:
-                item.enabled, item.values = existing[name]
+                prev = existing[name]
+                item.enabled     = prev["enabled"]
+                item.values      = prev["values"]
+                item.output_name = prev["output_name"]
+                item.components  = prev["components"]
             else:
                 item.enabled = True
                 item.values = "0, 1"
